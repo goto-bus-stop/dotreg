@@ -113,9 +113,9 @@ mod parse {
         branch::alt,
         bytes::complete::{is_not, tag, take_while, take_while_m_n},
         character::complete::{crlf, digit1, hex_digit1, newline},
-        combinator::{map, map_res},
+        combinator::{opt, map, map_res},
         multi::{many0, separated_list},
-        sequence::{delimited, preceded, separated_pair},
+        sequence::{pair, tuple, delimited, preceded, separated_pair},
         IResult,
     };
     use std::collections::HashMap;
@@ -133,7 +133,7 @@ mod parse {
         Ok((input, ()))
     }
 
-    fn eol(version: RegFileVersion) -> impl FnOnce(&str) -> IResult<&str, ()> {
+    fn eol(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, ()> {
         move |input: &str| {
             if version == RegFileVersion::Wine2 {
                 let (input, _) = newline(input)?;
@@ -182,27 +182,34 @@ mod parse {
         )(input)
     }
 
-    fn reg_value(input: &str) -> IResult<&str, RegValue> {
-        let dword = preceded(
-            tag("dword:"),
-            map_res(hex_digit1, |s| {
-                u32::from_str_radix(s, 16).map(RegValue::Dword)
-            }),
-        );
+    fn reg_value(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, RegValue> {
+        move |input: &str| {
+            let dword = preceded(
+                tag("dword:"),
+                map_res(hex_digit1, |s| {
+                    u32::from_str_radix(s, 16).map(RegValue::Dword)
+                }),
+            );
 
-        let binary = preceded(
-            tag("hex:"),
-            map(separated_list(tag(","), hex_byte), RegValue::Binary),
-        );
+            let comma_opt_newl = pair(
+                tag(","),
+                opt(tuple((tag("\\"), eol(version), skip_whitespace)))
+            );
 
-        let string = map(quoted_string, |s| RegValue::String(s.to_string()));
+            let binary = preceded(
+                tag("hex:"),
+                map(separated_list(comma_opt_newl, hex_byte), RegValue::Binary),
+            );
 
-        alt((dword, string, binary))(input)
+            let string = map(quoted_string, |s| RegValue::String(s.to_string()));
+
+            alt((dword, string, binary))(input)
+        }
     }
 
     fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (&str, RegValue)> {
         move |input: &str| {
-            let (input, tuple) = separated_pair(quoted_string, tag("="), reg_value)(input)?;
+            let (input, tuple) = separated_pair(quoted_string, tag("="), reg_value(version))(input)?;
             let (input, _) = eol(version)(input)?;
 
             Ok((input, tuple))
@@ -275,14 +282,16 @@ mod parse {
 
         #[test]
         fn reg_value_test() {
-            let (_, res) = reg_value("dword:0000000f").unwrap();
+            let (_, res) = reg_value(RegFileVersion::Win2K)("dword:0000000f").unwrap();
             assert_eq!(res, RegValue::Dword(0x0f));
-            let (_, res) = reg_value("\"192.168.178.116\"").unwrap();
+            let (_, res) = reg_value(RegFileVersion::Win2K)("\"192.168.178.116\"").unwrap();
             assert_eq!(res, RegValue::String("192.168.178.116".to_string()));
-            let (_, res) = reg_value(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
-            assert_eq!(res, RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()));
-            let (_, res) = reg_value("hex:30,00,00,80,10,00,00,00").unwrap();
-            assert_eq!(res, RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]));
+            let (_, res) = reg_value(RegFileVersion::Win2K)("hex:30,00,00,80,10,00,00,00").unwrap();
+            assert_eq!(res, RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]), "hex value");
+            let (_, res) = reg_value(RegFileVersion::Win2K)("hex:30,00,00,80,\\\r\n  10,00,00,00").unwrap();
+            assert_eq!(res, RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]), "multiline hex value");
+            let (_, res) = reg_value(RegFileVersion::Win2K)(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
+            assert_eq!(res, RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()), "unescape values");
         }
 
         #[test]
