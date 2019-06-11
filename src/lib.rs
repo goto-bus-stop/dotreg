@@ -35,6 +35,18 @@ impl RegKey {
     pub fn get_value(&self, name: &str) -> Option<&RegValue> {
         self.values.get(name)
     }
+
+    pub fn is_link(&self) -> bool {
+        if self.values.len() != 1 {
+            return false;
+        }
+        self.get_value("SymbolicLinkValue")
+            .map(|val| match val {
+                RegValue::Link(_) => true,
+                _ => false,
+            })
+            .unwrap_or(false)
+    }
 }
 
 impl ToString for RegKey {
