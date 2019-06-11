@@ -51,13 +51,23 @@ pub struct RegFile {
     keys: HashMap<String, RegKey>,
 }
 
+pub enum ParseRegFileError {
+    IoError(std::io::Error),
+    EncodingError,
+    ParseError,
+    /// The string was not fully parsed.
+    TrailingData,
+    // TrailingData(&str, RegFile),
+}
+
 impl std::str::FromStr for RegFile {
-    type Err = ();
+    type Err = ParseRegFileError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (remaining, regfile) = parse::reg_file(s).unwrap();
+        let (remaining, regfile) = parse::reg_file(s).map_err(|_| ParseRegFileError::ParseError)?;
         if !remaining.is_empty() {
-            Err(())
+            Err(ParseRegFileError::TrailingData)
+        // Err(ParseRegFileError::TrailingData(remaining, regfile))
         } else {
             Ok(regfile)
         }
@@ -70,6 +80,20 @@ impl ToString for RegFile {
         stringify::reg_file(self, &mut result);
         result
     }
+}
+
+///  Read and parse a registry file.
+pub fn read(mut input: impl std::io::Read) -> Result<RegFile, ParseRegFileError> {
+    let mut bytes = vec![];
+    input
+        .read_to_end(&mut bytes)
+        .map_err(ParseRegFileError::IoError)?;
+    let (s, _, failed) = UTF_16LE.decode(&bytes);
+    if failed {
+        return Err(ParseRegFileError::EncodingError);
+    }
+
+    s.parse()
 }
 
 const HEADER_WIN95: &str = "REGEDIT4\r\n";
@@ -171,6 +195,7 @@ mod parse {
     use super::{
         RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2,
     };
+    use encoding_rs::UTF_16LE;
     use nom::{
         branch::alt,
         bytes::complete::{is_not, tag, take_while, take_while_m_n},
@@ -259,19 +284,83 @@ mod parse {
                 }),
             );
 
-            let comma_opt_newl = pair(
-                tag(","),
-                opt(tuple((tag("\\"), eol(version), skip_whitespace))),
-            );
+            let comma_opt_newl = || {
+                pair(
+                    tag(","),
+                    opt(tuple((tag("\\"), eol(version), skip_whitespace))),
+                )
+            };
 
             let binary = preceded(
                 tag("hex:"),
-                map(separated_list(comma_opt_newl, hex_byte), RegValue::Binary),
+                map(separated_list(comma_opt_newl(), hex_byte), RegValue::Binary),
             );
 
             let string = map(quoted_string, |s| RegValue::String(s.to_string()));
 
-            alt((dword, string, binary))(input)
+            fn parse_expand_string(mut bytes: Vec<u8>) -> RegValue {
+                if bytes.ends_with(&[0, 0]) {
+                    bytes.pop();
+                    bytes.pop();
+                }
+                let (s, _, failed) = UTF_16LE.decode(&bytes);
+                if failed {
+                    eprintln!("{:?}", bytes);
+                    panic!("should do something useful here")
+                }
+
+                RegValue::ExpandString(s.to_string())
+            }
+
+            let expand_string = preceded(
+                tag("hex(2):"),
+                // TODO switch to map_res
+                map(
+                    separated_list(comma_opt_newl(), hex_byte),
+                    parse_expand_string,
+                ),
+            );
+
+            fn parse_multi_string(bytes: Vec<u8>) -> RegValue {
+                let mut strings = vec![];
+                let mut iter = bytes.iter();
+                let mut last_index = 0;
+                let mut index = 0;
+                loop {
+                    match (iter.next(), iter.next()) {
+                        (Some(0), Some(0)) => {
+                            if index == last_index {
+                                break;
+                            }
+
+                            let (s, _, failed) = UTF_16LE.decode(&bytes[last_index..index]);
+                            if failed {
+                                panic!("should do something useful here")
+                            }
+                            strings.push(s.to_string());
+                            last_index = index + 2;
+                        }
+                        (Some(_), Some(_)) => {}
+                        (Some(_), None) => panic!("uneven number of bytes"),
+                        (None, None) => panic!("expected to find four NULs at the end"),
+                        (None, Some(_)) => unreachable!(),
+                    }
+                    index += 2;
+                }
+
+                RegValue::MultiString(strings)
+            }
+
+            let multi_string = preceded(
+                tag("hex(7):"),
+                // TODO switch to map_res
+                map(
+                    separated_list(comma_opt_newl(), hex_byte),
+                    parse_multi_string,
+                ),
+            );
+
+            alt((dword, binary, expand_string, multi_string, string))(input)
         }
     }
 
@@ -373,6 +462,23 @@ mod parse {
                 res,
                 RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]),
                 "multiline hex value"
+            );
+            let (_, res) = reg_value(RegFileVersion::Win2K)("hex(2):43,00,3a,00,5c,00,50,00,72,00,6f,00,67,00,72,00,61,00,6d,00,20,00,46,\\\r\n00,69,00,6c,00,65,00,73,00,5c,00,49,00,6e,00,74,00,65,00,72,00,6e,00,65,00,\\\r\n74,00,20,00,45,00,78,00,70,00,6c,00,6f,00,72,00,65,00,72,00,5c,00,69,00,65,\\\r\n00,78,00,70,00,6c,00,6f,00,72,00,65,00,2e,00,65,00,78,00,65,00,2c,00,31,00,\\\r\n00,00").unwrap();
+            assert_eq!(
+                res,
+                RegValue::ExpandString(
+                    r"C:\Program Files\Internet Explorer\iexplore.exe,1".to_string()
+                )
+            );
+            let (_, res) = reg_value(RegFileVersion::Win2K)("hex(7):4d,00,53,00,47,00,4f,00,54,00,48,00,49,00,43,00,\\\r\n2e,00,54,00,54,00,43,00,2c,00,4d,00,53,00,20,00,55,00,49,00,20,00,47,00,6f,\\\r\n00,74,00,68,00,69,00,63,00,00,00,4d,00,49,00,4e,00,47,00,4c,00,49,00,55,00,\\\r\n2e,00,54,00,54,00,43,00,2c,00,50,00,4d,00,69,00,6e,00,67,00,4c,00,69,00,55,\\\r\n00,00,00,53,00,49,00,4d,00,53,00,55,00,4e,00,2e,00,54,00,54,00,43,00,2c,00,\\\r\n53,00,69,00,6d,00,53,00,75,00,6e,00,00,00,47,00,55,00,4c,00,49,00,4d,00,2e,\\\r\n00,54,00,54,00,43,00,2c,00,47,00,75,00,6c,00,69,00,6d,00,00,00,00,00").unwrap();
+            assert_eq!(
+                res,
+                RegValue::MultiString(vec![
+                    "MSGOTHIC.TTC,MS UI Gothic".to_string(),
+                    "MINGLIU.TTC,PMingLiU".to_string(),
+                    "SIMSUN.TTC,SimSun".to_string(),
+                    "GULIM.TTC,Gulim".to_string()
+                ])
             );
             let (_, res) =
                 reg_value(RegFileVersion::Win2K)(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
