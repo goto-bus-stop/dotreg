@@ -37,6 +37,14 @@ impl RegKey {
     }
 }
 
+impl ToString for RegKey {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        stringify::reg_key(self, &mut result);
+        result
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RegFile {
     version: RegFileVersion,
@@ -56,15 +64,23 @@ impl std::str::FromStr for RegFile {
     }
 }
 
+impl ToString for RegFile {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        stringify::reg_file(self, &mut result);
+        result
+    }
+}
+
 const HEADER_WIN95: &str = "REGEDIT4\r\n";
 const HEADER_WIN2K: &str = "Windows Registry Editor Version 5.00\r\n";
 const HEADER_WINE2: &str = "WINE REGISTRY Version 2\n";
 
-// pub fn read(input: impl Read) -> Result<RegFile> {
-// }
-
 mod stringify {
-    use super::{RegValue, RegFileVersion, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2};
+    use super::{
+        RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2,
+    };
+    use std::fmt::Write;
 
     fn header(version: RegFileVersion) -> &'static str {
         use RegFileVersion::*;
@@ -75,11 +91,49 @@ mod stringify {
         }
     }
 
-    fn reg_value(value: RegValue) -> String {
+    fn reg_key_header(name: &str, output: &mut String) {
+        write!(output, "[{}]", name).unwrap();
+    }
+
+    fn reg_value(value: &RegValue, output: &mut String) {
         match value {
-            RegValue::Dword(n) => format!("dword:{:08x}", n),
-            RegValue::String(s) => format!("\"{}\"", s),
-            _ => unimplemented!()
+            RegValue::Dword(n) => write!(output, "dword:{:08x}", n).unwrap(),
+            RegValue::String(s) => write!(output, "\"{}\"", s).unwrap(),
+            RegValue::Binary(v) => {
+                output.push_str("hex:");
+                for byte in v {
+                    write!(output, "{:02x},", byte).unwrap();
+                }
+                output.pop();
+            }
+            _ => unimplemented!(),
+        };
+    }
+
+    fn reg_value_line(name: &str, value: &RegValue, output: &mut String) {
+        write!(output, r#""{}"="#, name).unwrap();
+        reg_value(value, output);
+    }
+
+    fn reg_values<'a>(
+        values: impl IntoIterator<Item = (&'a str, &'a RegValue)>,
+        output: &mut String,
+    ) {
+        for (name, value) in values {
+            reg_value_line(name, value, output);
+        }
+    }
+
+    pub fn reg_key(key: &RegKey, output: &mut String) {
+        reg_key_header(&key.name, output);
+        reg_values(key.values.iter().map(|(n, v)| (&**n, v)), output);
+    }
+
+    pub fn reg_file(file: &RegFile, output: &mut String) {
+        output.push_str(header(file.version));
+
+        for key in file.keys.values() {
+            reg_key(key, output);
         }
     }
 
@@ -99,8 +153,16 @@ mod stringify {
 
         #[test]
         fn reg_value_test() {
-            assert_eq!(reg_value(RegValue::Dword(1234)), "dword:000004d2");
-            assert_eq!(reg_value(RegValue::String("abc".to_string())), "\"abc\"");
+            let mut result = String::new();
+            reg_value(&RegValue::Dword(1234), &mut result);
+            assert_eq!(result, "dword:000004d2");
+            result.clear();
+            reg_value(&RegValue::String("abc".to_string()), &mut result);
+            assert_eq!(result, "\"abc\"");
+            result.clear();
+            reg_value(&RegValue::Binary(vec![0, 1, 2, 3]), &mut result);
+            assert_eq!(result, "hex:00,01,02,03");
+            result.clear();
         }
     }
 }
@@ -113,13 +175,14 @@ mod parse {
         branch::alt,
         bytes::complete::{is_not, tag, take_while, take_while_m_n},
         character::complete::{crlf, digit1, hex_digit1, newline},
-        combinator::{opt, map, map_res},
+        combinator::{map, map_res, opt},
         multi::{many0, separated_list},
-        sequence::{pair, tuple, delimited, preceded, separated_pair},
+        sequence::{delimited, pair, preceded, separated_pair, tuple},
         IResult,
     };
     use std::collections::HashMap;
 
+    /// Determine the version of the file.
     fn header(input: &str) -> IResult<&str, RegFileVersion> {
         alt((
             map(tag(HEADER_WIN95), |_| RegFileVersion::Win95),
@@ -128,11 +191,13 @@ mod parse {
         ))(input)
     }
 
+    /// Take and discard all whitespace characters.
     fn skip_whitespace(input: &str) -> IResult<&str, ()> {
         let (input, _) = take_while(char::is_whitespace)(input)?;
         Ok((input, ()))
     }
 
+    /// Match an end-of-line sequence: LF for Wine registry hives, CRLF for Windows.
     fn eol(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, ()> {
         move |input: &str| {
             if version == RegFileVersion::Wine2 {
@@ -145,6 +210,9 @@ mod parse {
         }
     }
 
+    /// Read a registry key header: [HKEY_ROOT\KeyName]
+    ///
+    /// In Wine registry hives, key headers have a bunch of additional data that we'll ignore.
     fn reg_key_header(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, &str> {
         move |input: &str| {
             let (input, _) = skip_whitespace(input)?;
@@ -171,15 +239,15 @@ mod parse {
         delimited(tag("\""), is_not("\""), tag("\""))(input)
     }
 
+    /// Read a hex byte, two hexadecimal characters.
     fn hex_byte(input: &str) -> IResult<&str, u8> {
         fn is_hex_digit(c: char) -> bool {
             c.is_digit(16)
         }
 
-        map_res(
-            take_while_m_n(2, 2, is_hex_digit),
-            |s| u8::from_str_radix(s, 16)
-        )(input)
+        map_res(take_while_m_n(2, 2, is_hex_digit), |s| {
+            u8::from_str_radix(s, 16)
+        })(input)
     }
 
     fn reg_value(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, RegValue> {
@@ -193,7 +261,7 @@ mod parse {
 
             let comma_opt_newl = pair(
                 tag(","),
-                opt(tuple((tag("\\"), eol(version), skip_whitespace)))
+                opt(tuple((tag("\\"), eol(version), skip_whitespace))),
             );
 
             let binary = preceded(
@@ -209,7 +277,8 @@ mod parse {
 
     fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (&str, RegValue)> {
         move |input: &str| {
-            let (input, tuple) = separated_pair(quoted_string, tag("="), reg_value(version))(input)?;
+            let (input, tuple) =
+                separated_pair(quoted_string, tag("="), reg_value(version))(input)?;
             let (input, _) = eol(version)(input)?;
 
             Ok((input, tuple))
@@ -257,7 +326,13 @@ mod parse {
             keys_map.insert(key.name.clone(), key);
         }
 
-        Ok((input, RegFile { version, keys: keys_map }))
+        Ok((
+            input,
+            RegFile {
+                version,
+                keys: keys_map,
+            },
+        ))
     }
 
     #[cfg(test)]
@@ -287,11 +362,25 @@ mod parse {
             let (_, res) = reg_value(RegFileVersion::Win2K)("\"192.168.178.116\"").unwrap();
             assert_eq!(res, RegValue::String("192.168.178.116".to_string()));
             let (_, res) = reg_value(RegFileVersion::Win2K)("hex:30,00,00,80,10,00,00,00").unwrap();
-            assert_eq!(res, RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]), "hex value");
-            let (_, res) = reg_value(RegFileVersion::Win2K)("hex:30,00,00,80,\\\r\n  10,00,00,00").unwrap();
-            assert_eq!(res, RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]), "multiline hex value");
-            let (_, res) = reg_value(RegFileVersion::Win2K)(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
-            assert_eq!(res, RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()), "unescape values");
+            assert_eq!(
+                res,
+                RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]),
+                "hex value"
+            );
+            let (_, res) =
+                reg_value(RegFileVersion::Win2K)("hex:30,00,00,80,\\\r\n  10,00,00,00").unwrap();
+            assert_eq!(
+                res,
+                RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]),
+                "multiline hex value"
+            );
+            let (_, res) =
+                reg_value(RegFileVersion::Win2K)(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
+            assert_eq!(
+                res,
+                RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()),
+                "unescape values"
+            );
         }
 
         #[test]
