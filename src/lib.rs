@@ -51,6 +51,7 @@ pub struct RegFile {
     keys: HashMap<String, RegKey>,
 }
 
+#[derive(Debug)]
 pub enum ParseRegFileError {
     IoError(std::io::Error),
     EncodingError,
@@ -364,10 +365,14 @@ mod parse {
         }
     }
 
+    fn reg_value_name(input: &str) -> IResult<&str, &str> {
+        quoted_string(input).or_else(move |_| tag("@")(input))
+    }
+
     fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (&str, RegValue)> {
         move |input: &str| {
             let (input, tuple) =
-                separated_pair(quoted_string, tag("="), reg_value(version))(input)?;
+                separated_pair(reg_value_name, tag("="), reg_value(version))(input)?;
             let (input, _) = eol(version)(input)?;
 
             Ok((input, tuple))
@@ -411,7 +416,7 @@ mod parse {
 
         let mut keys_map = HashMap::new();
         for key in keys {
-            // eh can this be done without the clone
+            // meh, can this be done without the clone?
             keys_map.insert(key.name.clone(), key);
         }
 
@@ -505,6 +510,10 @@ mod parse {
                     RegValue::String("192.168.178.116".to_string())
                 )
             );
+            let (_, res) =
+                reg_value_line(RegFileVersion::Win2K)("@=dword:00000000\r\n")
+                    .unwrap();
+            assert_eq!(res, ("@", RegValue::Dword(0)));
         }
 
         #[test]
