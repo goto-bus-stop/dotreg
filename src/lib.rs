@@ -148,7 +148,11 @@ mod stringify {
     }
 
     fn reg_value_line(name: &str, value: &RegValue, output: &mut String) {
-        write!(output, r#""{}"="#, name).unwrap();
+        if name == "@" {
+            output.push_str("@=");
+        } else {
+            write!(output, r#""{}"="#, name).unwrap();
+        }
         reg_value(value, output);
     }
 
@@ -211,7 +215,7 @@ mod parse {
     use encoding_rs::UTF_16LE;
     use nom::{
         branch::alt,
-        bytes::complete::{is_not, tag, take_while, take_while_m_n},
+        bytes::complete::{is_not, tag, take_while, take_while_m_n, escaped_transform},
         character::complete::{crlf, digit1, hex_digit1, newline},
         combinator::{map, map_res, opt},
         multi::{many0, separated_list},
@@ -273,8 +277,15 @@ mod parse {
         }
     }
 
-    fn quoted_string(input: &str) -> IResult<&str, &str> {
-        delimited(tag("\""), is_not("\""), tag("\""))(input)
+    fn quoted_string(input: &str) -> IResult<&str, String> {
+        let middle = escaped_transform(is_not(r#"\""#), '\\', |esc: &str| match esc.chars().next() {
+            Some('\\') => Ok((&esc[1..], "\\")),
+            Some('"') => Ok((&esc[1..], "\"")),
+            Some('r') => Ok((&esc[1..], "\r")),
+            Some('n') => Ok((&esc[1..], "\n")),
+            _ => Ok((esc, "\\")),
+        });
+        delimited(tag("\""), middle, tag("\""))(input)
     }
 
     /// Read a hex byte, two hexadecimal characters.
@@ -393,11 +404,11 @@ mod parse {
         }
     }
 
-    fn reg_value_name(input: &str) -> IResult<&str, &str> {
-        quoted_string(input).or_else(move |_| tag("@")(input))
+    fn reg_value_name(input: &str) -> IResult<&str, String> {
+        quoted_string(input).or_else(move |_| map(tag("@"), ToString::to_string)(input))
     }
 
-    fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (&str, RegValue)> {
+    fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (String, RegValue)> {
         move |input: &str| {
             let (input, tuple) =
                 separated_pair(reg_value_name, tag("="), reg_value(version))(input)?;
@@ -409,7 +420,7 @@ mod parse {
 
     fn reg_values(
         version: RegFileVersion,
-    ) -> impl Fn(&str) -> IResult<&str, Vec<(&str, RegValue)>> {
+    ) -> impl Fn(&str) -> IResult<&str, Vec<(String, RegValue)>> {
         move |input: &str| {
             let (input, values) = many0(reg_value_line(version))(input)?;
             Ok((input, values))
@@ -529,19 +540,19 @@ mod parse {
             let (_, res) =
                 reg_value_line(RegFileVersion::Win2K)("\"Spec Default\"=dword:00000000\r\n")
                     .unwrap();
-            assert_eq!(res, ("Spec Default", RegValue::Dword(0)));
+            assert_eq!(res, ("Spec Default".to_string(), RegValue::Dword(0)));
             let (_, res) =
                 reg_value_line(RegFileVersion::Win2K)("\"Spectate IP\"=\"192.168.178.116\"\r\n")
                     .unwrap();
             assert_eq!(
                 res,
                 (
-                    "Spectate IP",
+                    "Spectate IP".to_string(),
                     RegValue::String("192.168.178.116".to_string())
                 )
             );
             let (_, res) = reg_value_line(RegFileVersion::Win2K)("@=dword:00000000\r\n").unwrap();
-            assert_eq!(res, ("@", RegValue::Dword(0)));
+            assert_eq!(res, ("@".to_string(), RegValue::Dword(0)));
         }
 
         #[test]
