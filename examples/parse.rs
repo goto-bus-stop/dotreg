@@ -5,7 +5,7 @@ fn main() {
         Some(path) => {
             let f = std::fs::File::open(path).unwrap();
             println!("{:?}", read(f).unwrap());
-        },
+        }
         None => {
             eprintln!("usage: cargo run --example parse <filename>");
         }

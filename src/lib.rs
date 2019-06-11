@@ -206,7 +206,7 @@ mod parse {
         sequence::{delimited, pair, preceded, separated_pair, tuple},
         IResult,
     };
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
 
     /// Determine the version of the file.
     fn header(input: &str) -> IResult<&str, RegFileVersion> {
@@ -361,7 +361,23 @@ mod parse {
                 ),
             );
 
-            alt((dword, binary, expand_string, multi_string, string))(input)
+            fn parse_link(bytes: Vec<u8>) -> RegValue {
+                let (s, _, failed) = UTF_16LE.decode(&bytes);
+                if failed {
+                    eprintln!("{:?}", bytes);
+                    panic!("should do something useful here")
+                }
+
+                RegValue::Link(PathBuf::from(s.to_string()))
+            }
+
+            let link = preceded(
+                tag("hex(6):"),
+                // TODO switch to map_res
+                map(separated_list(comma_opt_newl(), hex_byte), parse_link),
+            );
+
+            alt((dword, binary, expand_string, multi_string, link, string))(input)
         }
     }
 
@@ -475,6 +491,8 @@ mod parse {
                     r"C:\Program Files\Internet Explorer\iexplore.exe,1".to_string()
                 )
             );
+            let (_, res) = reg_value(RegFileVersion::Win2K)("hex(6):5c,00,52,00,65,00,67,00,69,00,73,00,74,00,72,00,79,\\\r\n00,5c,00,4d,00,61,00,63,00,68,00,69,00,6e,00,65,00,5c,00,53,00,6f,00,66,00,\\\r\n74,00,77,00,61,00,72,00,65,00,5c,00,4d,00,69,00,63,00,72,00,6f,00,73,00,6f,\\\r\n00,66,00,74,00,5c,00,57,00,69,00,6e,00,64,00,6f,00,77,00,73,00,20,00,4e,00,\\\r\n54,00,5c,00,43,00,75,00,72,00,72,00,65,00,6e,00,74,00,56,00,65,00,72,00,73,\\\r\n00,69,00,6f,00,6e,00,5c,00,49,00,6d,00,61,00,67,00,65,00,20,00,46,00,69,00,\\\r\n6c,00,65,00,20,00,45,00,78,00,65,00,63,00,75,00,74,00,69,00,6f,00,6e,00,20,\\\r\n00,4f,00,70,00,74,00,69,00,6f,00,6e,00,73,00").unwrap();
+            assert_eq!(res, RegValue::Link(r"\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options".to_string().into()));
             let (_, res) = reg_value(RegFileVersion::Win2K)("hex(7):4d,00,53,00,47,00,4f,00,54,00,48,00,49,00,43,00,\\\r\n2e,00,54,00,54,00,43,00,2c,00,4d,00,53,00,20,00,55,00,49,00,20,00,47,00,6f,\\\r\n00,74,00,68,00,69,00,63,00,00,00,4d,00,49,00,4e,00,47,00,4c,00,49,00,55,00,\\\r\n2e,00,54,00,54,00,43,00,2c,00,50,00,4d,00,69,00,6e,00,67,00,4c,00,69,00,55,\\\r\n00,00,00,53,00,49,00,4d,00,53,00,55,00,4e,00,2e,00,54,00,54,00,43,00,2c,00,\\\r\n53,00,69,00,6d,00,53,00,75,00,6e,00,00,00,47,00,55,00,4c,00,49,00,4d,00,2e,\\\r\n00,54,00,54,00,43,00,2c,00,47,00,75,00,6c,00,69,00,6d,00,00,00,00,00").unwrap();
             assert_eq!(
                 res,
@@ -510,9 +528,7 @@ mod parse {
                     RegValue::String("192.168.178.116".to_string())
                 )
             );
-            let (_, res) =
-                reg_value_line(RegFileVersion::Win2K)("@=dword:00000000\r\n")
-                    .unwrap();
+            let (_, res) = reg_value_line(RegFileVersion::Win2K)("@=dword:00000000\r\n").unwrap();
             assert_eq!(res, ("@", RegValue::Dword(0)));
         }
 
