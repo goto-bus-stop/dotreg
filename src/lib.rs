@@ -20,6 +20,7 @@ pub enum RegValue {
     MultiString(Vec<String>),
     /// A symbolic link to another registry key.
     Link(String),
+    Deletion,
 }
 
 /// A registry file format version.
@@ -500,7 +501,17 @@ mod parse {
                 map(separated_list(comma_opt_newl(), hex_byte), parse_link),
             );
 
-            alt((dword, binary, expand_string, multi_string, link, string))(input)
+            let delete = map(tag("-"), |_| RegValue::Deletion);
+
+            alt((
+                dword,
+                binary,
+                expand_string,
+                multi_string,
+                link,
+                string,
+                delete,
+            ))(input)
         }
     }
 
@@ -635,6 +646,8 @@ mod parse {
                 RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()),
                 "unescape values"
             );
+            let (_, res) = reg_value(RegFileVersion::Win2K)("-").unwrap();
+            assert_eq!(res, RegValue::Deletion, "deleted values");
         }
 
         #[test]
