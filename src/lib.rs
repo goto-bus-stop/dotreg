@@ -1,41 +1,82 @@
 //! Library for reading and writing Windows Registry files.
 
 use encoding_rs::UTF_16LE;
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
+/// A typed registry value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegValue {
+    /// Arbitrary bytes.
     Binary(Vec<u8>),
+    /// 32-bit integer.
     Dword(u32),
+    /// 64-bit integer.
     Qword(u64),
+    /// A string.
     String(String),
+    /// A string with %VARS% that should be expanded.
     ExpandString(String),
+    /// Multiple strings.
     MultiString(Vec<String>),
-    Link(PathBuf),
+    /// A symbolic link to another registry key.
+    Link(String),
 }
 
+/// A registry file format version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegFileVersion {
+    /// The regedit file format used by Windows versions before Windows 2000.
     Win95,
+    /// The regedit file format used by Windows versions from Windows 2000 on.
     Win2K,
+    /// The file format used by Wine for its registry storage.
     Wine2,
 }
 
+/// A registry key, with a name and a bunch of values.
 #[derive(Debug, Clone)]
 pub struct RegKey {
+    /// Name of the key.
     name: String,
+    /// Values.
     values: HashMap<String, RegValue>,
 }
 
 impl RegKey {
+    /// Create a new empty registry key.
+    pub fn new(name: String) -> RegKey {
+        RegKey {
+            name,
+            values: Default::default(),
+        }
+    }
+
+    /// Create a symbolic link to some other key.
+    pub fn new_link(name: String, target: &str) -> RegKey {
+        let mut key = RegKey::new(name);
+        key.set_link_target(target);
+        key
+    }
+
+    /// Get the root value (@) of this key.
     pub fn get_root_value(&self) -> Option<&RegValue> {
         self.get_value("@")
     }
 
+    /// Get a value from this key.
     pub fn get_value(&self, name: &str) -> Option<&RegValue> {
         self.values.get(name)
     }
 
+    pub fn set_root_value(&mut self, value: RegValue) {
+        self.set_value("@", value);
+    }
+
+    pub fn set_value(&mut self, name: &str, value: RegValue) {
+        self.values.insert(name.to_string(), value);
+    }
+
+    /// Is this key a symbolic link?
     pub fn is_link(&self) -> bool {
         if self.values.len() != 1 {
             return false;
@@ -47,9 +88,23 @@ impl RegKey {
             })
             .unwrap_or(false)
     }
+
+    /// If this key is a symbolic link, get the path to the key it targets.
+    pub fn link_target(&self) -> Option<&str> {
+        self.get_value("SymbolicLinkValue")
+            .and_then(|val| match val {
+                RegValue::Link(path) => Some(&**path),
+                _ => None,
+            })
+    }
+
+    pub fn set_link_target(&mut self, target: &str) {
+        self.set_value("SymbolicLinkValue", RegValue::Link(target.into()));
+    }
 }
 
 impl ToString for RegKey {
+    /// Serialize a registry key to the Win2K format.
     fn to_string(&self) -> String {
         let mut result = String::new();
         stringify::reg_key(self, &mut result);
@@ -57,15 +112,52 @@ impl ToString for RegKey {
     }
 }
 
+/// A registry file containing registry keys.
 #[derive(Debug, Clone)]
 pub struct RegFile {
+    /// The version of the file.
     version: RegFileVersion,
+    /// The keys in this file.
     keys: HashMap<String, RegKey>,
+}
+
+impl RegFile {
+    pub fn version(&self) -> RegFileVersion {
+        self.version
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &RegKey> {
+        self.keys.values()
+    }
+
+    pub fn keys_mut(&mut self) -> impl Iterator<Item = &mut RegKey> {
+        self.keys.values_mut()
+    }
+
+    pub fn add(&mut self, key: RegKey) {
+        self.keys.insert(key.name.clone(), key);
+    }
+
+    pub fn create_key(&mut self, name: &str) -> &mut RegKey {
+        let key = RegKey::new(name.to_string());
+        self.add(key);
+        self.get_key_mut(name).unwrap()
+    }
+
+    pub fn get_key(&self, name: &str) -> Option<&RegKey> {
+        self.keys.get(name)
+    }
+
+    pub fn get_key_mut(&mut self, name: &str) -> Option<&mut RegKey> {
+        self.keys.get_mut(name)
+    }
 }
 
 #[derive(Debug)]
 pub enum ParseRegFileError {
+    /// An error occurred while reading data.
     IoError(std::io::Error),
+    /// Tried to read a string but it was not in the expected encoding (usually UTF-16).
     EncodingError,
     ParseError,
     /// The string was not fully parsed.
@@ -76,6 +168,7 @@ pub enum ParseRegFileError {
 impl std::str::FromStr for RegFile {
     type Err = ParseRegFileError;
 
+    /// Parse a registry file from a UTF-8 string.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (remaining, regfile) = parse::reg_file(s).map_err(|_| ParseRegFileError::ParseError)?;
         if !remaining.is_empty() {
@@ -88,6 +181,7 @@ impl std::str::FromStr for RegFile {
 }
 
 impl ToString for RegFile {
+    /// Serialize a registry file to the Win2K format.
     fn to_string(&self) -> String {
         let mut result = String::new();
         stringify::reg_file(self, &mut result);
@@ -95,7 +189,7 @@ impl ToString for RegFile {
     }
 }
 
-///  Read and parse a registry file.
+/// Read and parse a registry file from a byte stream.
 pub fn read(mut input: impl std::io::Read) -> Result<RegFile, ParseRegFileError> {
     let mut bytes = vec![];
     input
@@ -215,14 +309,14 @@ mod parse {
     use encoding_rs::UTF_16LE;
     use nom::{
         branch::alt,
-        bytes::complete::{is_not, tag, take_while, take_while_m_n, escaped_transform},
+        bytes::complete::{escaped_transform, is_not, tag, take_while, take_while_m_n},
         character::complete::{crlf, digit1, hex_digit1, newline},
         combinator::{map, map_res, opt},
         multi::{many0, separated_list},
         sequence::{delimited, pair, preceded, separated_pair, tuple},
         IResult,
     };
-    use std::{collections::HashMap, path::PathBuf};
+    use std::collections::HashMap;
 
     /// Determine the version of the file.
     fn header(input: &str) -> IResult<&str, RegFileVersion> {
@@ -278,12 +372,14 @@ mod parse {
     }
 
     fn quoted_string(input: &str) -> IResult<&str, String> {
-        let middle = escaped_transform(is_not(r#"\""#), '\\', |esc: &str| match esc.chars().next() {
-            Some('\\') => Ok((&esc[1..], "\\")),
-            Some('"') => Ok((&esc[1..], "\"")),
-            Some('r') => Ok((&esc[1..], "\r")),
-            Some('n') => Ok((&esc[1..], "\n")),
-            _ => Ok((esc, "\\")),
+        let middle = escaped_transform(is_not(r#"\""#), '\\', |esc: &str| {
+            match esc.chars().next() {
+                Some('\\') => Ok((&esc[1..], "\\")),
+                Some('"') => Ok((&esc[1..], "\"")),
+                Some('r') => Ok((&esc[1..], "\r")),
+                Some('n') => Ok((&esc[1..], "\n")),
+                _ => Ok((esc, "\\")),
+            }
         });
         delimited(tag("\""), middle, tag("\""))(input)
     }
@@ -345,6 +441,10 @@ mod parse {
                 ),
             );
 
+            /// Parse bytes into a list of strings.
+            ///
+            /// Strings are separated by two NUL bytes. The list end is marked by an empty string,
+            /// i.e. four subsequent NUL bytes total.
             fn parse_multi_string(bytes: Vec<u8>) -> RegValue {
                 let mut strings = vec![];
                 let mut iter = bytes.iter();
@@ -391,7 +491,7 @@ mod parse {
                     panic!("should do something useful here")
                 }
 
-                RegValue::Link(PathBuf::from(s.to_string()))
+                RegValue::Link(s.to_string())
             }
 
             let link = preceded(
@@ -408,7 +508,9 @@ mod parse {
         quoted_string(input).or_else(move |_| map(tag("@"), ToString::to_string)(input))
     }
 
-    fn reg_value_line(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, (String, RegValue)> {
+    fn reg_value_line(
+        version: RegFileVersion,
+    ) -> impl Fn(&str) -> IResult<&str, (String, RegValue)> {
         move |input: &str| {
             let (input, tuple) =
                 separated_pair(reg_value_name, tag("="), reg_value(version))(input)?;
