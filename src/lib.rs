@@ -20,6 +20,7 @@ pub enum RegValue {
     MultiString(Vec<String>),
     /// A symbolic link to another registry key.
     Link(String),
+    /// This value is being deleted.
     Deletion,
 }
 
@@ -45,6 +46,7 @@ pub struct RegKey {
 
 impl RegKey {
     /// Create a new empty registry key.
+    #[inline]
     pub fn new(name: String) -> RegKey {
         RegKey {
             name,
@@ -53,6 +55,7 @@ impl RegKey {
     }
 
     /// Create a symbolic link to some other key.
+    #[inline]
     pub fn new_link(name: String, target: &str) -> RegKey {
         let mut key = RegKey::new(name);
         key.set_link_target(target);
@@ -60,21 +63,30 @@ impl RegKey {
     }
 
     /// Get the root value (@) of this key.
+    #[inline]
     pub fn get_root_value(&self) -> Option<&RegValue> {
         self.get_value("@")
     }
 
     /// Get a value from this key.
+    #[inline]
     pub fn get_value(&self, name: &str) -> Option<&RegValue> {
         self.values.get(name)
     }
 
+    #[inline]
     pub fn set_root_value(&mut self, value: RegValue) {
         self.set_value("@", value);
     }
 
+    #[inline]
     pub fn set_value(&mut self, name: &str, value: RegValue) {
         self.values.insert(name.to_string(), value);
+    }
+
+    #[inline]
+    pub fn delete_value(&mut self, name: &str) {
+        self.set_value(name, RegValue::Deletion);
     }
 
     /// Is this key a symbolic link?
@@ -99,6 +111,7 @@ impl RegKey {
             })
     }
 
+    #[inline]
     pub fn set_link_target(&mut self, target: &str) {
         self.set_value("SymbolicLinkValue", RegValue::Link(target.into()));
     }
@@ -376,6 +389,7 @@ mod parse {
         }
     }
 
+    /// Read a string surrounded by double quotes.
     fn quoted_string(input: &str) -> IResult<&str, String> {
         let middle = escaped_transform(is_not(r#"\""#), '\\', |esc: &str| {
             match esc.chars().next() {
@@ -400,6 +414,7 @@ mod parse {
         })(input)
     }
 
+    /// Read a value, like "dword:00000001"
     fn reg_value(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, RegValue> {
         move |input: &str| {
             let dword = preceded(
