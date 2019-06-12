@@ -1,6 +1,4 @@
-use super::{
-    RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2,
-};
+use super::{RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2};
 use std::fmt::Write;
 
 fn header(version: RegFileVersion) -> &'static str {
@@ -16,23 +14,25 @@ fn reg_key_header(name: &str, output: &mut String) {
     write!(output, "[{}]", name).unwrap();
 }
 
+fn quoted_string(s: &str, output: &mut String) {
+    output.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => output.push_str(r"\\"),
+            '\t' => output.push_str(r"\t"),
+            '\r' => output.push_str(r"\r"),
+            '\n' => output.push_str(r"\n"),
+            '"' => output.push_str(r#"\""#),
+            c => output.push(c),
+        }
+    }
+    output.push('"');
+}
+
 fn reg_value(value: &RegValue, output: &mut String) {
     match value {
         RegValue::Dword(n) => write!(output, "dword:{:08x}", n).unwrap(),
-        RegValue::String(s) => {
-            output.push('"');
-            for c in s.chars() {
-                match c {
-                    '\\' => output.push_str(r"\\"),
-                    '\t' => output.push_str(r"\t"),
-                    '\r' => output.push_str(r"\r"),
-                    '\n' => output.push_str(r"\n"),
-                    '"' => output.push_str(r#"\""#),
-                    c => output.push(c),
-                }
-            }
-            output.push('"');
-        }
+        RegValue::String(s) => quoted_string(s, output),
         RegValue::Binary(v) => {
             output.push_str("hex:");
             for byte in v {
@@ -46,17 +46,15 @@ fn reg_value(value: &RegValue, output: &mut String) {
 
 fn reg_value_line(name: &str, value: &RegValue, output: &mut String) {
     if name == "@" {
-        output.push_str("@=");
+        output.push('@');
     } else {
-        write!(output, r#""{}"="#, name).unwrap();
+        quoted_string(name, output);
     }
+    output.push('=');
     reg_value(value, output);
 }
 
-fn reg_values<'a>(
-    values: impl IntoIterator<Item = (&'a str, &'a RegValue)>,
-    output: &mut String,
-    ) {
+fn reg_values<'a>(values: impl IntoIterator<Item = (&'a str, &'a RegValue)>, output: &mut String) {
     for (name, value) in values {
         reg_value_line(name, value, output);
     }
@@ -98,7 +96,10 @@ mod tests {
         reg_value(&RegValue::String("abc".to_string()), &mut result);
         assert_eq!(result, "\"abc\"");
         result.clear();
-        reg_value(&RegValue::String("esc\r\na\"pe\\t\this".to_string()), &mut result);
+        reg_value(
+            &RegValue::String("esc\r\na\"pe\\t\this".to_string()),
+            &mut result,
+        );
         assert_eq!(result, r#""esc\r\na\"pe\\t\this""#);
         result.clear();
         reg_value(&RegValue::Binary(vec![0, 1, 2, 3]), &mut result);

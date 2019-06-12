@@ -194,7 +194,10 @@ impl RegFile {
         if !remaining.is_empty() {
             // don't really wanna do the to_string() here but dotreg::read needs to be able to
             // return this while dropping the &str local.
-            Err(ParseRegFileError::TrailingData(remaining.to_string(), regfile))
+            Err(ParseRegFileError::TrailingData(
+                remaining.to_string(),
+                regfile,
+            ))
         } else {
             Ok(regfile)
         }
