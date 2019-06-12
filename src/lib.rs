@@ -113,6 +113,18 @@ impl ToString for RegKey {
     }
 }
 
+/// Errors that may occur during parsing.
+#[derive(Debug)]
+pub enum ParseRegFileError {
+    /// An error occurred while reading data.
+    IoError(std::io::Error),
+    /// Tried to read a string but it was not in the expected encoding (usually UTF-16).
+    EncodingError,
+    ParseError,
+    /// The string was not fully parsed.
+    TrailingData(String, RegFile),
+}
+
 /// A registry file containing registry keys.
 #[derive(Debug, Clone)]
 pub struct RegFile {
@@ -123,58 +135,50 @@ pub struct RegFile {
 }
 
 impl RegFile {
+    /// Get the file format version.
     pub fn version(&self) -> RegFileVersion {
         self.version
     }
 
+    /// Iterate over all registry keys.
     pub fn keys(&self) -> impl Iterator<Item = &RegKey> {
         self.keys.values()
     }
 
+    /// Iterate mutably over all registry keys.
     pub fn keys_mut(&mut self) -> impl Iterator<Item = &mut RegKey> {
         self.keys.values_mut()
     }
 
+    /// Add a registry key to this file.
     pub fn add(&mut self, key: RegKey) {
         self.keys.insert(key.name.clone(), key);
     }
 
+    /// Create a registry key in this file and return it.
     pub fn create_key(&mut self, name: &str) -> &mut RegKey {
         let key = RegKey::new(name.to_string());
         self.add(key);
         self.get_key_mut(name).unwrap()
     }
 
+    /// Get a registry key by name.
     pub fn get_key(&self, name: &str) -> Option<&RegKey> {
         self.keys.get(name)
     }
 
+    /// Mutably get a registry key by name.
     pub fn get_key_mut(&mut self, name: &str) -> Option<&mut RegKey> {
         self.keys.get_mut(name)
     }
-}
-
-#[derive(Debug)]
-pub enum ParseRegFileError {
-    /// An error occurred while reading data.
-    IoError(std::io::Error),
-    /// Tried to read a string but it was not in the expected encoding (usually UTF-16).
-    EncodingError,
-    ParseError,
-    /// The string was not fully parsed.
-    TrailingData,
-    // TrailingData(&str, RegFile),
-}
-
-impl std::str::FromStr for RegFile {
-    type Err = ParseRegFileError;
 
     /// Parse a registry file from a UTF-8 string.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    pub fn parse(s: &str) -> Result<Self, ParseRegFileError> {
         let (remaining, regfile) = parse::reg_file(s).map_err(|_| ParseRegFileError::ParseError)?;
         if !remaining.is_empty() {
-            Err(ParseRegFileError::TrailingData)
-        // Err(ParseRegFileError::TrailingData(remaining, regfile))
+            // don't really wanna do the to_string() here but dotreg::read needs to be able to
+            // return this while dropping the &str local.
+            Err(ParseRegFileError::TrailingData(remaining.to_string(), regfile))
         } else {
             Ok(regfile)
         }
@@ -201,7 +205,7 @@ pub fn read(mut input: impl std::io::Read) -> Result<RegFile, ParseRegFileError>
         return Err(ParseRegFileError::EncodingError);
     }
 
-    s.parse()
+    RegFile::parse(&s)
 }
 
 const HEADER_WIN95: &str = "REGEDIT4\r\n";
