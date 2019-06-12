@@ -19,7 +19,20 @@ fn reg_key_header(name: &str, output: &mut String) {
 fn reg_value(value: &RegValue, output: &mut String) {
     match value {
         RegValue::Dword(n) => write!(output, "dword:{:08x}", n).unwrap(),
-        RegValue::String(s) => write!(output, "\"{}\"", s).unwrap(),
+        RegValue::String(s) => {
+            output.push('"');
+            for c in s.chars() {
+                match c {
+                    '\\' => output.push_str(r"\\"),
+                    '\t' => output.push_str(r"\t"),
+                    '\r' => output.push_str(r"\r"),
+                    '\n' => output.push_str(r"\n"),
+                    '"' => output.push_str(r#"\""#),
+                    c => output.push(c),
+                }
+            }
+            output.push('"');
+        }
         RegValue::Binary(v) => {
             output.push_str("hex:");
             for byte in v {
@@ -84,6 +97,9 @@ mod tests {
         result.clear();
         reg_value(&RegValue::String("abc".to_string()), &mut result);
         assert_eq!(result, "\"abc\"");
+        result.clear();
+        reg_value(&RegValue::String("esc\r\na\"pe\\t\this".to_string()), &mut result);
+        assert_eq!(result, r#""esc\r\na\"pe\\t\this""#);
         result.clear();
         reg_value(&RegValue::Binary(vec![0, 1, 2, 3]), &mut result);
         assert_eq!(result, "hex:00,01,02,03");
