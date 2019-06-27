@@ -1,4 +1,7 @@
-use crate::{RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2};
+use crate::{
+    RegFile, RegFileBuilder, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95,
+    HEADER_WINE2,
+};
 use encoding_rs::UTF_16LE;
 use nom::{
     branch::alt,
@@ -195,7 +198,7 @@ fn reg_value(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, RegValue
             map(separated_list(comma_opt_newl(), hex_byte), parse_link),
         );
 
-        let delete = map(tag("-"), |_| RegValue::Deletion);
+        let delete = map(tag("-"), |_| RegValue::Delete);
 
         alt((
             dword,
@@ -251,23 +254,17 @@ fn reg_key(version: RegFileVersion) -> impl Fn(&str) -> IResult<&str, RegKey> {
 }
 
 pub fn reg_file(input: &str) -> IResult<&str, RegFile> {
+    let builder = RegFileBuilder::default();
+
     let (input, version) = header(input)?;
+    let mut builder = builder.version(version);
 
     let (input, keys) = many0(reg_key(version))(input)?;
-
-    let mut keys_map = HashMap::new();
     for key in keys {
-        // meh, can this be done without the clone?
-        keys_map.insert(key.name.clone(), key);
+        builder = builder.update_key(key);
     }
 
-    Ok((
-        input,
-        RegFile {
-            version,
-            keys: keys_map,
-        },
-    ))
+    Ok((input, builder.build()))
 }
 
 #[cfg(test)]
@@ -336,7 +333,7 @@ mod tests {
             "unescape values"
         );
         let (_, res) = reg_value(RegFileVersion::Win2K)("-").unwrap();
-        assert_eq!(res, RegValue::Deletion, "deleted values");
+        assert_eq!(res, RegValue::Delete, "deleted values");
     }
 
     #[test]

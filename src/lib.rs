@@ -24,7 +24,7 @@ pub enum RegValue {
     /// A symbolic link to another registry key.
     Link(String),
     /// This value is being deleted.
-    Deletion,
+    Delete,
 }
 
 /// A registry file format version.
@@ -89,7 +89,7 @@ impl RegKey {
 
     #[inline]
     pub fn delete_value(&mut self, name: &str) {
-        self.set_value(name, RegValue::Deletion);
+        self.set_value(name, RegValue::Delete);
     }
 
     /// Is this key a symbolic link?
@@ -141,13 +141,28 @@ pub enum ParseRegFileError {
     TrailingData(String, RegFile),
 }
 
+#[derive(Debug, Clone)]
+pub enum RegKeyMod {
+    Update(RegKey),
+    Delete,
+}
+
 /// A registry file containing registry keys.
 #[derive(Debug, Clone)]
 pub struct RegFile {
     /// The version of the file.
     version: RegFileVersion,
     /// The keys in this file.
-    keys: HashMap<String, RegKey>,
+    keys: HashMap<String, RegKeyMod>,
+}
+
+impl Default for RegFile {
+    fn default() -> Self {
+        Self {
+            version: RegFileVersion::Win2K,
+            keys: Default::default(),
+        }
+    }
 }
 
 impl RegFile {
@@ -157,18 +172,23 @@ impl RegFile {
     }
 
     /// Iterate over all registry keys.
-    pub fn keys(&self) -> impl Iterator<Item = &RegKey> {
+    pub fn keys(&self) -> impl Iterator<Item = &RegKeyMod> {
         self.keys.values()
     }
 
     /// Iterate mutably over all registry keys.
-    pub fn keys_mut(&mut self) -> impl Iterator<Item = &mut RegKey> {
+    pub fn keys_mut(&mut self) -> impl Iterator<Item = &mut RegKeyMod> {
         self.keys.values_mut()
     }
 
     /// Add a registry key to this file.
     pub fn add(&mut self, key: RegKey) {
-        self.keys.insert(key.name.clone(), key);
+        self.keys.insert(key.name.clone(), RegKeyMod::Update(key));
+    }
+
+    /// Delete a registry key.
+    pub fn delete(&mut self, name: &str) {
+        self.keys.insert(name.to_string(), RegKeyMod::Delete);
     }
 
     /// Create a registry key in this file and return it.
@@ -180,12 +200,24 @@ impl RegFile {
 
     /// Get a registry key by name.
     pub fn get_key(&self, name: &str) -> Option<&RegKey> {
-        self.keys.get(name)
+        self.keys.get(name).and_then(|key_mod| {
+            if let RegKeyMod::Update(ref key) = key_mod {
+                Some(key)
+            } else {
+                None
+            }
+        })
     }
 
     /// Mutably get a registry key by name.
     pub fn get_key_mut(&mut self, name: &str) -> Option<&mut RegKey> {
-        self.keys.get_mut(name)
+        self.keys.get_mut(name).and_then(|key_mod| {
+            if let RegKeyMod::Update(key) = key_mod {
+                Some(key)
+            } else {
+                None
+            }
+        })
     }
 
     /// Parse a registry file from a UTF-8 string.
@@ -213,6 +245,35 @@ impl ToString for RegFile {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct RegFileBuilder {
+    inner: RegFile,
+}
+impl RegFileBuilder {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn version(mut self, version: RegFileVersion) -> Self {
+        self.inner.version = version;
+        self
+    }
+
+    pub fn update_key(mut self, key: RegKey) -> Self {
+        self.inner.add(key);
+        self
+    }
+
+    pub fn delete_key(mut self, path: &str) -> Self {
+        self.inner.delete(path);
+        self
+    }
+
+    pub fn build(self) -> RegFile {
+        self.inner
+    }
+}
+
 /// Read and parse a registry file from a byte stream.
 pub fn read(mut input: impl std::io::Read) -> Result<RegFile, ParseRegFileError> {
     let mut bytes = vec![];
@@ -233,8 +294,10 @@ const HEADER_WINE2: &str = "WINE REGISTRY Version 2\n";
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    fn builder() {
+        RegFileBuilder::default().build().to_string();
     }
 }

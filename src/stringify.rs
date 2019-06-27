@@ -1,4 +1,6 @@
-use super::{RegFile, RegFileVersion, RegKey, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2};
+use super::{
+    RegFile, RegFileVersion, RegKey, RegKeyMod, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2,
+};
 use std::fmt::Write;
 
 fn header(version: RegFileVersion) -> &'static str {
@@ -11,7 +13,11 @@ fn header(version: RegFileVersion) -> &'static str {
 }
 
 fn reg_key_header(name: &str, output: &mut String) {
-    write!(output, "[{}]", name).unwrap();
+    write!(output, "[{}]\r\n", name).unwrap();
+}
+
+fn reg_key_delete(name: &str, output: &mut String) {
+    write!(output, "[-{}]\r\n", name).unwrap();
 }
 
 fn quoted_string(s: &str, output: &mut String) {
@@ -68,8 +74,11 @@ pub fn reg_key(key: &RegKey, output: &mut String) {
 pub fn reg_file(file: &RegFile, output: &mut String) {
     output.push_str(header(file.version));
 
-    for key in file.keys.values() {
-        reg_key(key, output);
+    for (name, key_mod) in file.keys.iter() {
+        match key_mod {
+            RegKeyMod::Delete => reg_key_delete(name, output),
+            RegKeyMod::Update(key) => reg_key(key, output),
+        }
     }
 }
 
