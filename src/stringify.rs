@@ -1,5 +1,5 @@
 use super::{
-    RegFile, RegFileVersion, RegKey, RegKeyMod, RegValue, HEADER_WIN2K, HEADER_WIN95, HEADER_WINE2,
+    RegFile, RegFileVersion, RegKey, RegKeyMod, RegValue, HEADER_WIN2K, HEADER_WIN95,
 };
 use std::fmt::Write;
 
@@ -8,7 +8,6 @@ fn header(version: RegFileVersion) -> &'static str {
     match version {
         Win95 => HEADER_WIN95,
         Win2K => HEADER_WIN2K,
-        Wine2 => HEADER_WINE2,
     }
 }
 
@@ -44,8 +43,19 @@ fn reg_value(value: &RegValue, output: &mut String) {
             for byte in v {
                 write!(output, "{:02x},", byte).unwrap();
             }
-            output.pop();
+            if v.len() > 0 {
+                output.pop();
+            }
         }
+        RegValue::Link(target) => {
+            output.push_str("hex(6):");
+            for byte in target.as_bytes() {
+                write!(output, "{:02x},", byte).unwrap();
+            }
+            if target.len() > 0 {
+                output.pop();
+            }
+        },
         _ => unimplemented!(),
     };
 }
@@ -92,8 +102,6 @@ mod tests {
         assert_eq!(res, "REGEDIT4\r\n");
         let res = header(RegFileVersion::Win2K);
         assert_eq!(res, "Windows Registry Editor Version 5.00\r\n");
-        let res = header(RegFileVersion::Wine2);
-        assert_eq!(res, "WINE REGISTRY Version 2\n");
     }
 
     #[test]
