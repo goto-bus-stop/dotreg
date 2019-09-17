@@ -1,5 +1,13 @@
 //! Library for reading and writing Windows Registry files.
 
+#![deny(future_incompatible)]
+#![deny(nonstandard_style)]
+#![deny(rust_2018_idioms)]
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
+#![warn(unused)]
+#![allow(clippy::write_with_newline)]
+
 mod parse;
 mod stringify;
 
