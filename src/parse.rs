@@ -80,12 +80,7 @@ fn reg_value() -> impl Fn(&str) -> IResult<&str, RegValue> {
             }),
         );
 
-        let comma_opt_newl = || {
-            pair(
-                tag(","),
-                opt(tuple((tag("\\"), crlf, skip_whitespace))),
-            )
-        };
+        let comma_opt_newl = || pair(tag(","), opt(tuple((tag("\\"), crlf, skip_whitespace))));
 
         let binary = preceded(
             tag("hex:"),
@@ -275,8 +270,7 @@ mod tests {
             RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]),
             "hex value"
         );
-        let (_, res) =
-            reg_value()("hex:30,00,00,80,\\\r\n  10,00,00,00").unwrap();
+        let (_, res) = reg_value()("hex:30,00,00,80,\\\r\n  10,00,00,00").unwrap();
         assert_eq!(
             res,
             RegValue::Binary(vec![0x30, 0x00, 0x00, 0x80, 0x10, 0x00, 0x00, 0x00]),
@@ -301,8 +295,7 @@ mod tests {
                 "GULIM.TTC,Gulim".to_string()
             ])
         );
-        let (_, res) =
-            reg_value()(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
+        let (_, res) = reg_value()(r#""C:\\users\\goto-bus-stop\\Temp""#).unwrap();
         assert_eq!(
             res,
             RegValue::String(r"C:\users\goto-bus-stop\Temp".to_string()),
@@ -314,12 +307,9 @@ mod tests {
 
     #[test]
     fn reg_value_line_test() {
-        let (_, res) =
-            reg_value_line()("\"Spec Default\"=dword:00000000\r\n").unwrap();
+        let (_, res) = reg_value_line()("\"Spec Default\"=dword:00000000\r\n").unwrap();
         assert_eq!(res, ("Spec Default".to_string(), RegValue::Dword(0)));
-        let (_, res) =
-            reg_value_line()("\"Spectate IP\"=\"192.168.178.116\"\r\n")
-                .unwrap();
+        let (_, res) = reg_value_line()("\"Spectate IP\"=\"192.168.178.116\"\r\n").unwrap();
         assert_eq!(
             res,
             (

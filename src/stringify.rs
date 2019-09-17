@@ -1,6 +1,4 @@
-use super::{
-    RegFile, RegFileVersion, RegKey, RegKeyMod, RegValue, HEADER_WIN2K, HEADER_WIN95,
-};
+use super::{RegFile, RegFileVersion, RegKey, RegKeyMod, RegValue, HEADER_WIN2K, HEADER_WIN95};
 use std::fmt::Write;
 
 fn header(version: RegFileVersion) -> &'static str {
@@ -55,7 +53,7 @@ fn reg_value(value: &RegValue, output: &mut String) {
             if target.len() > 0 {
                 output.pop();
             }
-        },
+        }
         _ => unimplemented!(),
     };
 }
