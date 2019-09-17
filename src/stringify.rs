@@ -41,7 +41,7 @@ fn reg_value(value: &RegValue, output: &mut String) {
             for byte in v {
                 write!(output, "{:02x},", byte).unwrap();
             }
-            if v.len() > 0 {
+            if !v.is_empty() {
                 output.pop();
             }
         }
@@ -50,7 +50,7 @@ fn reg_value(value: &RegValue, output: &mut String) {
             for byte in target.as_bytes() {
                 write!(output, "{:02x},", byte).unwrap();
             }
-            if target.len() > 0 {
+            if !target.is_empty() {
                 output.pop();
             }
         }
