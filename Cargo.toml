@@ -1,6 +1,6 @@
 [package]
 name = "dotreg"
-description = "Parse and stringify Windows and Wine registry files"
+description = "Parse and stringify Windows registry files (.reg)"
 version = "0.1.0"
 authors = ["Renée Kooi <renee@kooi.me>"]
 edition = "2018"
