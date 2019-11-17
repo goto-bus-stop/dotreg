@@ -125,7 +125,7 @@ impl RegKey {
     /// r"HKEY_CURRENT_USER\Software\MyKeyV1");
     /// assert_eq!(key.to_string(), concat!(
     ///     "[HKEY_CURRENT_USER\\Software\\MyKeyV2]\r\n",
-    ///     "\"SymbolicLinkValue\"=hex(6):48,4b,45,59,5f,43,55,52,52,45,4e,54,5f,55,53,45,52,5c,53,6f,66,74,77,61,72,65,5c,4d,79,4b,65,79,56,31",
+    ///     "\"SymbolicLinkValue\"=hex(6):48,4b,45,59,5f,43,55,52,52,45,4e,54,5f,55,53,45,52,5c,53,6f,66,74,77,61,72,65,5c,4d,79,4b,65,79,56,31\r\n",
     /// ));
     /// ```
     #[inline]
