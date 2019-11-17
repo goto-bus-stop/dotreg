@@ -35,6 +35,52 @@ pub enum RegValue {
     Delete,
 }
 
+impl From<Vec<u8>> for RegValue {
+    fn from(bytes: Vec<u8>) -> Self {
+        RegValue::Binary(bytes)
+    }
+}
+
+impl From<&[u8]> for RegValue {
+    fn from(bytes: &[u8]) -> Self {
+        RegValue::Binary(bytes.to_vec())
+    }
+}
+
+impl From<u32> for RegValue {
+    fn from(dword: u32) -> Self {
+        RegValue::Dword(dword)
+    }
+}
+
+impl From<u64> for RegValue {
+    fn from(qword: u64) -> Self {
+        RegValue::Qword(qword)
+    }
+}
+
+impl From<String> for RegValue {
+    /// Convert a String to a RegValue::String(). For strings with %ENVIRONMENT_VARIABLE%s, use the
+    /// manual RegValue::ExpandString() constructor.
+    fn from(string: String) -> Self {
+        RegValue::String(string)
+    }
+}
+
+impl From<&str> for RegValue {
+    /// Convert a String to a RegValue::String(). For strings with %ENVIRONMENT_VARIABLE%s, use the
+    /// manual RegValue::ExpandString() constructor.
+    fn from(string: &str) -> Self {
+        RegValue::String(string.to_string())
+    }
+}
+
+impl From<Vec<String>> for RegValue {
+    fn from(strings: Vec<String>) -> Self {
+        RegValue::MultiString(strings)
+    }
+}
+
 /// A registry file format version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegFileVersion {
@@ -103,14 +149,14 @@ impl RegKey {
 
     /// Set the root value (@) of this key.
     #[inline]
-    pub fn set_root_value(&mut self, value: RegValue) -> &mut Self {
+    pub fn set_root_value(&mut self, value: impl Into<RegValue>) -> &mut Self {
         self.set_value("@", value)
     }
 
     /// Set a value in this key.
     #[inline]
-    pub fn set_value(&mut self, name: &str, value: RegValue) -> &mut Self {
-        self.values.insert(name.to_string(), value);
+    pub fn set_value(&mut self, name: &str, value: impl Into<RegValue>) -> &mut Self {
+        self.values.insert(name.to_string(), value.into());
         self
     }
 
