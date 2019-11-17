@@ -66,6 +66,7 @@ fn reg_value_line(name: &str, value: &RegValue, output: &mut String) {
     }
     output.push('=');
     reg_value(value, output);
+    output.push_str("\r\n");
 }
 
 fn reg_values<'a>(values: impl IntoIterator<Item = (&'a str, &'a RegValue)>, output: &mut String) {
