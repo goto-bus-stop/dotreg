@@ -103,20 +103,21 @@ impl RegKey {
 
     /// Set the root value (@) of this key.
     #[inline]
-    pub fn set_root_value(&mut self, value: RegValue) {
-        self.set_value("@", value);
+    pub fn set_root_value(&mut self, value: RegValue) -> &mut Self {
+        self.set_value("@", value)
     }
 
     /// Set a value in this key.
     #[inline]
-    pub fn set_value(&mut self, name: &str, value: RegValue) {
+    pub fn set_value(&mut self, name: &str, value: RegValue) -> &mut Self {
         self.values.insert(name.to_string(), value);
+        self
     }
 
     /// Mark a value from this key for deletion.
     #[inline]
-    pub fn delete_value(&mut self, name: &str) {
-        self.set_value(name, RegValue::Delete);
+    pub fn delete_value(&mut self, name: &str) -> &mut Self {
+        self.set_value(name, RegValue::Delete)
     }
 
     /// Is this key a symbolic link?
@@ -153,8 +154,8 @@ impl RegKey {
 
     /// Set the symbolic link target of this key.
     #[inline]
-    pub fn set_link_target(&mut self, target: &str) {
-        self.set_value("SymbolicLinkValue", RegValue::Link(target.into()));
+    pub fn set_link_target(&mut self, target: &str) -> &mut Self {
+        self.set_value("SymbolicLinkValue", RegValue::Link(target.into()))
     }
 }
 
