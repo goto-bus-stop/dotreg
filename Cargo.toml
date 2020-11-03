@@ -8,4 +8,4 @@ license = "GPL-3.0"
 
 [dependencies]
 encoding_rs = "^0.8.17"
-nom = "^5.0.1"
+nom = "^6.0.0"
